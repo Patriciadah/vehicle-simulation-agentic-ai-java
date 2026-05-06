@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Crane Simulation</title>
+
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #2c3e50;
+            color: white;
+        }
+        canvas {
+            border: 4px solid #34495e;
+            background: #ecf0f1;
+            border-radius: 8px;
+        }
+        .controls {
+            margin: 20px;
+            padding: 20px;
+            background: #34495e;
+            border-radius: 8px;
+        }
+        button {
+            padding: 10px 20px;
+            cursor: pointer;
+            background: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover { background: #2ecc71; }
+    </style>
+</head>
+
+<body>
+
+<h2>Port Automation AI Simulation</h2>
+
+<div class="controls">
+    <h3>Spawn Vehicles</h3>
+
+    Shore: <select id="spawnShore"></select>
+    Yard: <select id="spawnYard"></select>
+
+    Count:
+    <input type="number" id="spawnCount" value="1" min="1" max="50" style="width:60px;">
+
+    <button onclick="spawnMultiple()">Spawn</button>
+
+    <hr>
+
+    <h3>Manage Vehicles</h3>
+    <select id="vehicleList"><option>-- No Vehicles --</option></select>
+
+    New Shore: <select id="newShore"></select>
+    New Yard: <select id="newYard"></select>
+
+    <button onclick="updateMission()">Change Mission</button>
+</div>
+
+<canvas id="simCanvas" width="1000" height="600"></canvas>
+
+<script>
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let knownVehicles = [];
+    let currentVehicles = {};
+    let dragging = null;
+    let hasSpawnedVehicles = false;
+
+    // =====================
+    // CRANE DATA (single source of truth)
+    // =====================
+    const shoreCranes = {
+        S1: { x: 100, y: 100 },
+        S2: { x: 100, y: 300 },
+        S3: { x: 100, y: 500 }
+    };
+
+    const yardCranes = {
+        Y1: { x: 700, y: 250 },
+        Y2: { x: 700, y: 400 },
+        Y3: { x: 700, y: 500 }
+    };
+    function round2(num) {
+        return Math.round(num * 100) / 100;
+    }
+    // =====================
+    // DROPDOWNS
+    // =====================
+    function populateDropdown(selectId, data) {
+        const select = document.getElementById(selectId);
+        select.innerHTML = "";
+
+        Object.entries(data).forEach(([key, pos]) => {
+            const option = document.createElement("option");
+            option.value = key;
+            option.textContent = `${key} (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)})`;
+            select.appendChild(option);
+        });
+    }
+
+    populateDropdown("spawnShore", shoreCranes);
+    populateDropdown("spawnYard", yardCranes);
+    populateDropdown("newShore", shoreCranes);
+    populateDropdown("newYard", yardCranes);
+
+    // =====================
+    // DRAGGING LOGIC
+    // =====================
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mouseup', () => dragging = null);
+    canvas.addEventListener('mouseleave', () => dragging = null);
+
+    function getMousePos(evt) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: evt.clientX - rect.left,
+            y: evt.clientY - rect.top
+        };
+    }
+
+    function findCraneAt(x, y) {
+        const size = 15;
+
+        for (const [key, c] of Object.entries(shoreCranes)) {
+            if (Math.abs(x - c.x) < size && Math.abs(y - c.y) < size) {
+                return { type: 'shore', key };
+            }
+        }
+
+        for (const [key, c] of Object.entries(yardCranes)) {
+            if (Math.abs(x - c.x) < size && Math.abs(y - c.y) < size) {
+                return { type: 'yard', key };
+            }
+        }
+
+        return null;
+    }
+
+    function onMouseDown(evt) {
+        if (hasSpawnedVehicles) return; // 🔒 LOCK after spawn
+
+        const pos = getMousePos(evt);
+        const hit = findCraneAt(pos.x, pos.y);
+
+        if (hit) dragging = hit;
+    }
+
+    function onMouseMove(evt) {
+        if (!dragging || hasSpawnedVehicles) return;
+
+        const pos = getMousePos(evt);
+
+        const x = round2(pos.x);
+        const y = round2(pos.y);
+
+        if (dragging.type === 'shore') {
+            shoreCranes[dragging.key].x = x;
+            shoreCranes[dragging.key].y = y;
+        } else {
+            yardCranes[dragging.key].x = x;
+            yardCranes[dragging.key].y = y;
+        }
+
+        populateDropdown("spawnShore", shoreCranes);
+        populateDropdown("spawnYard", yardCranes);
+        populateDropdown("newShore", shoreCranes);
+        populateDropdown("newYard", yardCranes);
+
+        draw(currentVehicles);
+    }
+
+    // =====================
+    // DRAWING
+    // =====================
+    function draw(vehicles) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        Object.entries(shoreCranes).forEach(([key, c]) =>
+            drawBox(c.x, c.y, "blue", key)
+        );
+
+        Object.entries(yardCranes).forEach(([key, c]) =>
+            drawBox(c.x, c.y, "darkred", key)
+        );
+
+        Object.keys(vehicles || {}).forEach(id => {
+            const v = vehicles[id];
+            ctx.fillStyle = v.hasContainer ? "green" : "black";
+            ctx.fillRect(v.x - 8, v.y - 8, 16, 16);
+
+            // Draw labels
+            ctx.fillStyle = "black";
+            ctx.font = "10px Arial";
+            ctx.fillText(id, v.x - 15, v.y - 12);
+        });
+    }
+
+    function drawBox(x, y, color, label) {
+        if (hasSpawnedVehicles) ctx.globalAlpha = 0.5;
+
+        ctx.fillStyle = color;
+        ctx.fillRect(x - 15, y - 15, 30, 30);
+
+        ctx.globalAlpha = 1;
+
+        ctx.fillStyle = color;
+        ctx.fillText(label, x - 15, y + 30);
+    }
+
+    // =====================
+    // SPAWNING
+    // =====================
+    function spawnVehicle() {
+        const s = shoreCranes[document.getElementById('spawnShore').value];
+        const y = yardCranes[document.getElementById('spawnYard').value];
+
+        const id = "AGV_" + Math.floor(Math.random() * 1000);
+
+        fetch('/api/simulation/spawn', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                id,
+                shoreCrane: s,
+                yardCrane: y
+            })
+        });
+    }
+
+    function spawnMultiple() {
+        // Lock cranes
+        hasSpawnedVehicles = true;
+        const count = parseInt(document.getElementById('spawnCount').value) || 1;
+
+        for (let i = 0; i < count; i++) {
+            spawnVehicle();
+        }
+
+    }
+
+    // =====================
+    // UPDATE MISSION
+    // =====================
+    function updateMission() {
+        const id = document.getElementById('vehicleList').value;
+        if (!id || id === "-- No Vehicles --") return;
+
+        const s = shoreCranes[document.getElementById('newShore').value];
+        const y = yardCranes[document.getElementById('newYard').value];
+
+        fetch('/api/simulation/update-mission', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                id,
+                newShore: s,
+                newYard: y
+            })
+        });
+    }
+
+    // =====================
+    // WEBSOCKET
+    // =====================
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${location.host}/simulation`);
+
+    socket.onmessage = (event) => {
+        const vehicleStates = JSON.parse(event.data);
+        currentVehicles = vehicleStates;
+        updateVehicleDropdown(Object.keys(vehicleStates));
+        draw(vehicleStates);
+    };
+
+    function updateVehicleDropdown(ids) {
+        const select = document.getElementById('vehicleList');
+
+        if (ids.length === 0) {
+            select.innerHTML = '<option>-- No Vehicles --</option>';
+        } else {
+            select.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
+        }
+    }
+
+    // Initial draw
+    draw({});
+</script>
+
+</body>
+</html>
