@@ -10,14 +10,28 @@ import java.util.List;
  * - Slow near busy stations
  */
 public class DefaultMovementStrategy implements MovementStrategy {
-    /*
-    * NEXT POSITION PREDICTION ALGORITHM:
-    *   Hyper parameters:
-    *   @QUEUE_RADIUS: radius of station overwhelming awareness: Vehicles slow down to avoid collision too close to the station that is already occupied - @stationBusy=true
-    *   @BRAKING_FACTOR: slowing down factor to avoid station overwhelming
-    *   @MIN_SPEED: avoids complete stopping
-    *
-    */
+    // HYPER PARAMETERS
+    private static final double QUEUE_RADIUS = 60.0;
+    private static final double BRAKING_FACTOR= 0.8;
+    private static final double MIN_SPEED=0.5;
+    private static final double AVOIDANCE_DISTANCE_FACTOR=30.0;
+    private static final double AVOIDANCE_WEIGHT = 1.2;
+    private static final double MAX_SPEED = 4.0;
+
+    // Seek Behaviour
+    private static final double SLOWING_DISTANCE = 15.0;
+    private static final double MAX_STEER_FORCE = 0.2;
+
+    // Avoidance Behaviour
+    private static final double MIN_EFFECTIVE_SPEED = 0.1;
+    private static final double BASE_LOOKAHEAD = 60.0;
+    private static final double LOOKAHEAD_SPEED_FACTOR = 10.0;
+    private static final double AVOIDANCE_RADIUS = 40.0;
+    private static final double FORWARD_THRESHOLD = 0.3;
+    private static final double REPULSION_WEIGHT = 0.8;
+    private static final double SIDE_BIAS = -1.0;
+    private static final double MAX_AVOIDANCE_FORCE = 1.0;
+
     @Override
     public MovementResult computeNext(
             Vector2D position,
@@ -27,10 +41,7 @@ public class DefaultMovementStrategy implements MovementStrategy {
             boolean stationBusy
     ) {
 
-        // HYPER PARAMETERS
-        final double QUEUE_RADIUS = 60.0;
-        final double BRAKING_FACTOR= 0.8;
-        final double MIN_SPEED=0.5;
+
 
         double distanceToTarget = position.distance(target);
 
@@ -59,16 +70,13 @@ public class DefaultMovementStrategy implements MovementStrategy {
         //  AVOIDANCE: The force to avoid other vehicles
         Vector2D avoidanceForce = calculateAvoidance(position, velocity, neighbors);
 
-
-
-
         // Blend behavior based on distance to target
-        double avoidanceFactor = Math.min(distanceToTarget / 20.0, 1.0);
-        avoidanceForce = avoidanceForce.multiply(1.2 * avoidanceFactor);
+        double avoidanceFactor = Math.min(distanceToTarget /AVOIDANCE_DISTANCE_FACTOR, 1.0);
+        avoidanceForce = avoidanceForce.multiply(AVOIDANCE_WEIGHT * avoidanceFactor);
 
         Vector2D totalForce = seekForce.add(avoidanceForce);
 
-        newVelocity = velocity.add(totalForce).limitMagnitude(4.0);
+        newVelocity = velocity.add(totalForce).limitMagnitude(MAX_SPEED);
         newPosition = position.add(newVelocity);
 
         return new MovementResult(newPosition, newVelocity);
@@ -85,23 +93,20 @@ public class DefaultMovementStrategy implements MovementStrategy {
 
         double distance = desired.magnitude();
 
-        double slowingDistance = 15.0;
-        double maxSpeed = 4.0;
-
         if (distance > 0) {
             desired = desired.normalize();
 
             // Slow down when approaching target
-            if (distance < slowingDistance) {
-                double ramped = maxSpeed * (distance / slowingDistance);
+            if (distance < SLOWING_DISTANCE) {
+                double ramped = MAX_SPEED * (distance /SLOWING_DISTANCE );
                 desired = desired.multiply(ramped);
             } else {
-                desired = desired.multiply(maxSpeed);
+                desired = desired.multiply(MAX_SPEED);
             }
         }
 
         // Steering = desired velocity - current velocity
-        return desired.subtract(velocity).limitMagnitude(0.2);
+        return desired.subtract(velocity).limitMagnitude(MAX_STEER_FORCE);
     }
 
     /**
@@ -113,13 +118,12 @@ public class DefaultMovementStrategy implements MovementStrategy {
         Vector2D steer = new Vector2D(0, 0);
 
         double speed = velocity.magnitude();
-        if (speed < 0.1) return steer;
+        if (speed <  MIN_EFFECTIVE_SPEED) return steer;
 
         // Normalized direction of movement
         Vector2D heading = velocity.normalize();
 
-        double lookAhead = 60.0 + speed * 10.0;
-        double radius = 40.0;
+        double lookAhead =BASE_LOOKAHEAD + speed * LOOKAHEAD_SPEED_FACTOR;
 
         int count = 0;
 
@@ -134,17 +138,17 @@ public class DefaultMovementStrategy implements MovementStrategy {
 
             // Dot product → tells if object is in front
             double forward = heading.x * dirToOther.x + heading.y * dirToOther.y;
-            if (forward < 0.3) continue;
+            if (forward < FORWARD_THRESHOLD) continue;
 
-            // --- REPULSION ---
+            // Repulsion
             Vector2D repulse = position.subtract(other).normalize();
 
-            double strength = Math.max((radius - dist) / radius, 0);
-            repulse = repulse.multiply(strength * 0.8);
+            double strength = Math.max((AVOIDANCE_RADIUS - dist) / MAX_AVOIDANCE_FORCE, 0);
+            repulse = repulse.multiply(strength * REPULSION_WEIGHT);
 
-            // --- SIDE STEP ---
+            // Side Step
             Vector2D side = new Vector2D(-heading.y, heading.x);
-            side = side.multiply(-1.0);
+            side = side.multiply(SIDE_BIAS);
 
             double sideStrength = (1.0 - dist / lookAhead);
             side = side.multiply(sideStrength);
@@ -154,7 +158,7 @@ public class DefaultMovementStrategy implements MovementStrategy {
         }
 
         if (count > 0) {
-            steer = steer.divide(count).limitMagnitude(1.0);
+            steer = steer.divide(count).limitMagnitude(MAX_AVOIDANCE_FORCE);
         }
 
         return steer;

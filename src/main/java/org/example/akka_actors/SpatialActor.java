@@ -10,19 +10,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/*
-* Is in charge of maintaining a Map of all VehicleActors in comes in contact with
-* ! Make sure he is aware of all Vehicle Actors
-*
-* STATUS: INCOMPLETE
-*
-* Implemented this far:
-*   1. Receives message from VehicleActor to update vehicle location
-*   2. Sends message to VehicleActor about other nearby (100 distance radius) vehicle positions
-*   3. Is created by: None
-*   4. Communicates with Websocket?
-*
-* */
+/**
+ * The SpatialActor tracks the physical location of all vehicles in the simulation.
+ *
+ * It acts as a central "map" that vehicles talk to so they know where
+ * other vehicles are located. This helps them avoid collisions and
+ * manage access to stations.
+ *
+ * Main Functions:
+ * - Keeps a record of every vehicle's current X and Y coordinates.
+ * - Tells vehicles about nearby neighbors so they can steer away.
+ * - Handles "Station Locking" so only one vehicle can use a station at a time.
+ * - Forwards the entire simulation map to the WebSocket for live viewing.
+ */
 public class SpatialActor extends AbstractBehavior<SimulationMessages.SpatialCommand> {
     private final Map<String, VehicleState> vehicleStates = new HashMap<>();
     private final Map<Vector2D, String> stationLocks = new HashMap<>();
@@ -69,6 +69,7 @@ public class SpatialActor extends AbstractBehavior<SimulationMessages.SpatialCom
 
         vehicleStates.put(msg.id, new VehicleState(msg.pos, msg.hasContainer));
         Vector2D targetStation = msg.targetStation;
+
         // If I am very close to my target, I "Lock" it
         double arrivalThreshold = 50.0;
         if (msg.pos.distance(targetStation) < arrivalThreshold) {
@@ -91,7 +92,7 @@ public class SpatialActor extends AbstractBehavior<SimulationMessages.SpatialCom
                 .filter(pos -> msg.pos.distance(pos) < 200)
                 .collect(Collectors.toList());
 
-        // 3. Send the "Radar" data back to the vehicle for its AI swerving logic
+        //  Send the "Radar" data back to the vehicle for its AI swerving logic
         msg.vehicleRef.tell(new SimulationMessages.NearbyVehicles(neighbors,stationBusy));
 
         webSocketActor.tell(

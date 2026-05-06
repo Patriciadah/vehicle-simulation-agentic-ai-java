@@ -43,7 +43,10 @@ public class SimulationMessages {
         public final boolean stationIsBusy;
         public NearbyVehicles(List<Vector2D> positions,boolean stationIsBusy ) { this.positions = positions; this.stationIsBusy=stationIsBusy; }
     }
-
+    /**
+     *  Simulation Manager -> Vehicle Actor:<br>
+     *  Simulation Manager forwards UI commands to change destination cranes<br>
+     */
     public static class UpdateMission implements VehicleCommand {
         public final Vector2D newShore;
         public final Vector2D newYard;
@@ -54,7 +57,10 @@ public class SimulationMessages {
     }
     // Internal Heartbeat
     public enum Tick implements VehicleCommand { INSTANCE }
-
+    /**
+     *  Simulation Manager ->Spatial Actor:<br>
+     *  Simulation Manager expects a reply containing a boolean confirming safety<br>
+     */
     public static class CheckSpawnSafety implements SpatialCommand {
         public final Vector2D pos;
         public final double radius;
